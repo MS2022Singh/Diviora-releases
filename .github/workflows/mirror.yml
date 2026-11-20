@@ -1,0 +1,33 @@
+name: Mirror releases
+# Copies each new release (installers + version.json) from MS2022Singh/Diviora into this public download repository.
+# Runs every hour and on demand (Actions → Mirror releases → Run workflow). Uses only this repository's own token.
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Copy the newest Diviora release if it is missing here
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SRC: MS2022Singh/Diviora
+          DST: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag=$(gh release view --repo "$SRC" --json tagName -q .tagName 2>/dev/null || true)
+          if [ -z "$tag" ]; then echo "::warning::No release found in $SRC (is it private? then use the RELEASES_TOKEN push from Diviora instead)"; exit 0; fi
+          if gh release view "$tag" --repo "$DST" >/dev/null 2>&1; then echo "$tag already mirrored"; exit 0; fi
+          mkdir -p dl
+          gh release download "$tag" --repo "$SRC" --dir dl
+          # Apps built for this repo read version.json from here, so point its download links here too.
+          if [ -f dl/version.json ]; then sed -i "s#github.com/$SRC/releases#github.com/$DST/releases#g" dl/version.json; fi
+          notes=$(gh release view "$tag" --repo "$SRC" --json body -q .body | sed "s#github.com/$SRC/releases#github.com/$DST/releases#g")
+          gh release create "$tag" dl/* --repo "$DST" --title "DIVIORA Music ${tag#v}" --notes "$notes" --latest
+          echo "Mirrored $tag"
